@@ -1,5 +1,0 @@
-# Created at 2026-09-22T23:57:43.330
-Boot Manifest-JAR contains absolute paths in classpath 'F:\BE\Microservices\bookteria\reading-service\target\test-classes'
-Hint: <argLine>-Djdk.net.URLClassPath.disableClassPathURLCheck=true</argLine>
-'other' has different root
-

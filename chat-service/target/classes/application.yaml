@@ -1,0 +1,54 @@
+server:
+  port: 8085
+  servlet:
+    context-path: /chat
+spring:
+  application:
+    name: chat-service
+  mongodb:
+    uri: mongodb://root:123456@localhost:27017/chat-service?authSource=admin
+  data:
+    mongodb:
+      auto-index-creation: true
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: chat-service
+      auto-offset-reset: earliest
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
+        spring.json.trusted.packages: "*"
+        spring.json.value.default.type: com.devteria.chat.dto.FriendEventMessage
+        # Luôn deserialize theo default.type ở trên, KHÔNG tin header __TypeId__ do producer gửi
+        # kèm. identity-service's lockUser() publish "user-events" bằng Map<String,Object> thô
+        # (không phải 1 class riêng) -> JsonSerializer tự stamp __TypeId__=java.util.HashMap, và
+        # vì java.util.HashMap là class JDK có thật trên classpath chat-service (khác
+        # OutboxEventMessage của friend-service/group-service, class đó KHÔNG có trên classpath
+        # này nên tự fallback đúng về default.type), JsonDeserializer trước đây ưu tiên dùng đúng
+        # HashMap thay vì FriendEventMessage đã cấu hình -> listener nhận sai kiểu, ném lỗi mỗi
+        # lần -> DefaultErrorHandler cố dead-letter mãi không xong (giá trị lúc đó là HashMap đã
+        # deserialize được, không phải raw bytes) -> consumer kẹt vĩnh viễn ở message đó.
+        spring.json.use.type.headers: false
+
+
+app:
+  services:
+    profile:
+      url: http://localhost:8081/profile
+    identity:
+      url: http://localhost:8080/identity
+    friend:
+      url: http://localhost:8088/friend
+
+jwt:
+  signerKey: "1TjXchw5FloESb63Kc+DFhTARvpWL4jUGCwfGWxuG5SIf/1y/LgJxHnMqaF6A/ij"
+
+management:
+  endpoint:
+    health:
+      show-details: always
+  endpoints:
+    web:
+      exposure:
+        include: health,info

@@ -1,0 +1,9 @@
+GROUP,PACKAGE,CLASS,INSTRUCTION_MISSED,INSTRUCTION_COVERED,BRANCH_MISSED,BRANCH_COVERED,LINE_MISSED,LINE_COVERED,COMPLEXITY_MISSED,COMPLEXITY_COVERED,METHOD_MISSED,METHOD_COVERED
+friend-service,com.devteria.friend.service,OutboxPublisher,98,14,4,0,25,4,3,2,1,2
+friend-service,com.devteria.friend.service,FriendService,865,0,76,0,227,0,64,0,26,0
+friend-service,com.devteria.friend.service,OutboxEventService,145,4,4,0,31,1,3,1,1,1
+friend-service,com.devteria.friend.exception,AppException,4,11,0,0,2,4,1,2,1,2
+friend-service,com.devteria.friend.exception,GlobalExceptionHandler,128,0,2,0,37,0,8,0,7,0
+friend-service,com.devteria.friend.exception,ErrorCode,0,152,0,0,0,21,0,2,0,2
+friend-service,com.devteria.friend.controller,FriendController,104,0,0,0,37,0,13,0,13,0
+friend-service,com.devteria.friend,FriendServiceApplication,8,0,0,0,3,0,2,0,2,0

@@ -1,0 +1,473 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FriendService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">friend-service</a> &gt; <a href="index.source.html" class="el_package">com.devteria.friend.service</a> &gt; <span class="el_source">FriendService.java</span></div><h1>FriendService.java</h1><pre class="source lang-java linenums">package com.devteria.friend.service;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.stream.Stream;
+
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Service;
+
+import com.devteria.friend.dto.FriendBlockedEventPayload;
+import com.devteria.friend.dto.FriendRequestStatus;
+import com.devteria.friend.dto.OutboxEventType;
+import com.devteria.friend.dto.request.FriendRequestCreateRequest;
+import com.devteria.friend.dto.response.BlockResponse;
+import com.devteria.friend.dto.response.FriendRequestResponse;
+import com.devteria.friend.dto.response.FriendResponse;
+import com.devteria.friend.dto.response.UserProfileResponse;
+import com.devteria.friend.entity.Block;
+import com.devteria.friend.entity.FriendRequest;
+import com.devteria.friend.exception.AppException;
+import com.devteria.friend.exception.ErrorCode;
+import com.devteria.friend.mapper.BlockMapper;
+import com.devteria.friend.mapper.FriendMapper;
+import com.devteria.friend.repository.BlockRepository;
+import com.devteria.friend.repository.FriendRequestRepository;
+import com.devteria.friend.repository.httpclient.ProfileClient;
+
+import feign.FeignException;
+import lombok.AccessLevel;
+import lombok.RequiredArgsConstructor;
+import lombok.experimental.FieldDefaults;
+
+@Service
+@RequiredArgsConstructor
+@FieldDefaults(level = AccessLevel.PRIVATE, makeFinal = true)
+public class FriendService {
+    FriendRequestRepository friendRequestRepository;
+    ProfileClient profileClient;
+    FriendMapper friendMapper;
+    OutboxEventService outboxEventService;
+    BlockRepository blockRepository;
+    BlockMapper blockMapper;
+
+    public void blockUser(String blockedId) {
+        String currentUserId =
+<span class="nc" id="L47">                SecurityContextHolder.getContext().getAuthentication().getName();</span>
+<span class="nc bnc" id="L48" title="All 2 branches missed.">        if (currentUserId.equals(blockedId)) {</span>
+<span class="nc" id="L49">            throw new AppException(ErrorCode.CANNOT_BLOCK_YOURSELF);</span>
+        }
+<span class="nc" id="L51">        checkUserExists(blockedId);</span>
+        // Không gửi request nếu đã block
+<span class="nc bnc" id="L53" title="All 2 branches missed.">        if (blockRepository.existsByBlockerIdAndBlockedId(currentUserId, blockedId)) {</span>
+<span class="nc" id="L54">            throw new AppException(ErrorCode.ALREADY_BLOCKED);</span>
+        }
+<span class="nc" id="L56">        Block block = Block.builder()</span>
+<span class="nc" id="L57">                .blockerId(currentUserId)</span>
+<span class="nc" id="L58">                .blockedId(blockedId)</span>
+<span class="nc" id="L59">                .createdAt(Instant.now())</span>
+<span class="nc" id="L60">                .build();</span>
+
+        try {
+<span class="nc" id="L63">            blockRepository.save(block);</span>
+<span class="nc" id="L64">        } catch (DuplicateKeyException e) {</span>
+            // 2 request block gần như đồng thời cùng lọt qua check existsBy() ở
+            // trên — unique index (blockerId, blockedId) chặn ở DB, coi như đã
+            // block rồi (đúng ý nghĩa nghiệp vụ của race condition này).
+<span class="nc" id="L68">            throw new AppException(ErrorCode.ALREADY_BLOCKED);</span>
+<span class="nc" id="L69">        }</span>
+
+        // cancel request
+<span class="nc" id="L72">        cancelFriendRelationship(currentUserId, blockedId);</span>
+
+        // phát real time
+<span class="nc" id="L75">        FriendBlockedEventPayload payload = FriendBlockedEventPayload.builder()</span>
+<span class="nc" id="L76">                .blockerId(currentUserId)</span>
+<span class="nc" id="L77">                .blockedId(blockedId)</span>
+<span class="nc" id="L78">                .build();</span>
+
+<span class="nc" id="L80">        outboxEventService.recordEvent(currentUserId, OutboxEventType.FRIEND_BLOCKED, payload);</span>
+<span class="nc" id="L81">    }</span>
+
+    public void unblockUser(String blockedId) {
+        String currentUserId =
+<span class="nc" id="L85">                SecurityContextHolder.getContext().getAuthentication().getName();</span>
+<span class="nc bnc" id="L86" title="All 2 branches missed.">        if (!blockRepository.existsByBlockerIdAndBlockedId(currentUserId, blockedId)) {</span>
+<span class="nc" id="L87">            throw new AppException(ErrorCode.NOT_BLOCKED);</span>
+        }
+<span class="nc" id="L89">        blockRepository.deleteByBlockerIdAndBlockedId(currentUserId, blockedId);</span>
+
+<span class="nc" id="L91">        FriendBlockedEventPayload payload = FriendBlockedEventPayload.builder()</span>
+<span class="nc" id="L92">                .blockerId(currentUserId)</span>
+<span class="nc" id="L93">                .blockedId(blockedId)</span>
+<span class="nc" id="L94">                .build();</span>
+
+<span class="nc" id="L96">        outboxEventService.recordEvent(currentUserId, OutboxEventType.FRIEND_UNBLOCKED, payload);</span>
+<span class="nc" id="L97">    }</span>
+
+    public FriendRequestResponse sendRequest(FriendRequestCreateRequest request) {
+        String currentUserId =
+<span class="nc" id="L101">                SecurityContextHolder.getContext().getAuthentication().getName();</span>
+<span class="nc" id="L102">        String receiverId = getProfileByUsername(request.getReceiverUsername()).getUserId();</span>
+<span class="nc bnc" id="L103" title="All 2 branches missed.">        if (blockRepository.existsByBlockerIdAndBlockedId(currentUserId, receiverId)</span>
+<span class="nc bnc" id="L104" title="All 2 branches missed.">                || blockRepository.existsByBlockerIdAndBlockedId(receiverId, currentUserId)) {</span>
+<span class="nc" id="L105">            throw new AppException(ErrorCode.BLOCKED);</span>
+        }
+<span class="nc bnc" id="L107" title="All 2 branches missed.">        if (currentUserId.equals(receiverId)) {</span>
+<span class="nc" id="L108">            throw new AppException(ErrorCode.CANNOT_FRIEND_YOURSELF);</span>
+        }
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        if (isFriend(currentUserId, receiverId)) {</span>
+<span class="nc" id="L111">            throw new AppException(ErrorCode.ALREADY_FRIENDS);</span>
+        }
+
+        // Kiểm tra request hiện tại
+<span class="nc" id="L115">        FriendRequest reverseRequest = friendRequestRepository</span>
+<span class="nc" id="L116">                .findBySenderIdAndReceiverId(receiverId, currentUserId)</span>
+<span class="nc" id="L117">                .orElse(null);</span>
+        // check request hiện tại
+
+<span class="nc" id="L120">        FriendRequest existingRequest = friendRequestRepository</span>
+<span class="nc" id="L121">                .findBySenderIdAndReceiverId(currentUserId, receiverId)</span>
+<span class="nc" id="L122">                .orElse(null);</span>
+<span class="nc bnc" id="L123" title="All 4 branches missed.">        if (existingRequest != null &amp;&amp; existingRequest.getStatus() == FriendRequestStatus.PENDING) {</span>
+<span class="nc" id="L124">            throw new AppException(ErrorCode.FRIEND_REQUEST_ALREADY_PENDING);</span>
+        }
+        // check chiều ngược lại
+
+<span class="nc bnc" id="L128" title="All 4 branches missed.">        if (reverseRequest != null &amp;&amp; reverseRequest.getStatus() == FriendRequestStatus.PENDING) {</span>
+<span class="nc" id="L129">            reverseRequest.setStatus(FriendRequestStatus.ACCEPTED);</span>
+<span class="nc" id="L130">            reverseRequest.setUpdatedAt(Instant.now());</span>
+<span class="nc" id="L131">            friendRequestRepository.save(reverseRequest);</span>
+
+<span class="nc" id="L133">            FriendRequestResponse reverseResponse = toEnrichedResponse(reverseRequest);</span>
+<span class="nc" id="L134">            outboxEventService.recordEvent(</span>
+<span class="nc" id="L135">                    reverseRequest.getId(), OutboxEventType.FRIEND_REQUEST_ACCEPTED, reverseResponse);</span>
+<span class="nc" id="L136">            return reverseResponse;</span>
+        }
+
+        // sử dụng lại document nếu request đã rejected hoặc cancelled
+        FriendRequest friendRequest;
+<span class="nc bnc" id="L141" title="All 2 branches missed.">        if (existingRequest != null) {</span>
+<span class="nc" id="L142">            friendRequest = existingRequest;</span>
+<span class="nc" id="L143">            friendRequest.setStatus(FriendRequestStatus.PENDING);</span>
+<span class="nc" id="L144">            friendRequest.setUpdatedAt(Instant.now());</span>
+        } else {
+<span class="nc" id="L146">            friendRequest = FriendRequest.builder()</span>
+<span class="nc" id="L147">                    .senderId(currentUserId)</span>
+<span class="nc" id="L148">                    .receiverId(receiverId)</span>
+<span class="nc" id="L149">                    .status(FriendRequestStatus.PENDING)</span>
+<span class="nc" id="L150">                    .createdAt(Instant.now())</span>
+<span class="nc" id="L151">                    .updatedAt(Instant.now())</span>
+<span class="nc" id="L152">                    .build();</span>
+        }
+        try {
+<span class="nc" id="L155">            friendRequestRepository.save(friendRequest);</span>
+<span class="nc" id="L156">        } catch (DuplicateKeyException e) {</span>
+            // 2 request sendRequest gần như đồng thời cùng lọt qua check
+            // existingRequest==null ở trên — unique index (senderId, receiverId)
+            // chặn ở DB, người kia đã tạo request trước, coi như đã pending rồi.
+<span class="nc" id="L160">            throw new AppException(ErrorCode.FRIEND_REQUEST_ALREADY_PENDING);</span>
+<span class="nc" id="L161">        }</span>
+<span class="nc" id="L162">        FriendRequestResponse response = toEnrichedResponse(friendRequest);</span>
+<span class="nc" id="L163">        outboxEventService.recordEvent(friendRequest.getId(), OutboxEventType.FRIEND_REQUEST_SENT, response);</span>
+
+<span class="nc" id="L165">        return response;</span>
+    }
+
+    // Chấp nhận lời mời
+
+    public FriendRequestResponse acceptRequest(String requestId) {
+        String currentId =
+<span class="nc" id="L172">                SecurityContextHolder.getContext().getAuthentication().getName();</span>
+<span class="nc" id="L173">        FriendRequest request = getFriendRequest(requestId);</span>
+
+        // chỉ receiver mới đc chấp nhận
+<span class="nc bnc" id="L176" title="All 2 branches missed.">        if (!request.getReceiverId().equals(currentId)) {</span>
+<span class="nc" id="L177">            throw new AppException(ErrorCode.UNAUTHORIZED);</span>
+        }
+<span class="nc bnc" id="L179" title="All 2 branches missed.">        if (request.getStatus() != FriendRequestStatus.PENDING) {</span>
+<span class="nc" id="L180">            throw new AppException(ErrorCode.FRIEND_REQUEST_NOT_PENDING);</span>
+        }
+<span class="nc" id="L182">        request.setStatus(FriendRequestStatus.ACCEPTED);</span>
+
+<span class="nc" id="L184">        request.setUpdatedAt(Instant.now());</span>
+<span class="nc" id="L185">        friendRequestRepository.save(request);</span>
+
+<span class="nc" id="L187">        FriendRequestResponse response = toEnrichedResponse(request);</span>
+<span class="nc" id="L188">        outboxEventService.recordEvent(request.getId(), OutboxEventType.FRIEND_REQUEST_ACCEPTED, response);</span>
+
+<span class="nc" id="L190">        return response;</span>
+    }
+
+    // từ chối lời mời
+
+    public FriendRequestResponse rejectRequest(String requestId) {
+        String currentId =
+<span class="nc" id="L197">                SecurityContextHolder.getContext().getAuthentication().getName();</span>
+<span class="nc" id="L198">        FriendRequest request = getFriendRequest(requestId);</span>
+
+<span class="nc bnc" id="L200" title="All 2 branches missed.">        if (!request.getReceiverId().equals(currentId)) {</span>
+<span class="nc" id="L201">            throw new AppException(ErrorCode.UNAUTHORIZED);</span>
+        }
+<span class="nc bnc" id="L203" title="All 2 branches missed.">        if (request.getStatus() != FriendRequestStatus.PENDING) {</span>
+<span class="nc" id="L204">            throw new AppException(ErrorCode.FRIEND_REQUEST_NOT_PENDING);</span>
+        }
+<span class="nc" id="L206">        request.setStatus(FriendRequestStatus.REJECTED);</span>
+<span class="nc" id="L207">        request.setUpdatedAt(Instant.now());</span>
+
+<span class="nc" id="L209">        friendRequestRepository.save(request);</span>
+
+<span class="nc" id="L211">        FriendRequestResponse response = toEnrichedResponse(request);</span>
+<span class="nc" id="L212">        outboxEventService.recordEvent(request.getId(), OutboxEventType.FRIEND_REQUEST_REJECTED, response);</span>
+
+<span class="nc" id="L214">        return response;</span>
+    }
+
+    // Hủy lời mời
+
+    public void cancelRequest(String requestId) {
+        String currentId =
+<span class="nc" id="L221">                SecurityContextHolder.getContext().getAuthentication().getName();</span>
+<span class="nc" id="L222">        FriendRequest request = getFriendRequest(requestId);</span>
+
+        // chỉ sender mới được huỷ request của chính mình
+<span class="nc bnc" id="L225" title="All 2 branches missed.">        if (!request.getSenderId().equals(currentId)) {</span>
+<span class="nc" id="L226">            throw new AppException(ErrorCode.UNAUTHORIZED);</span>
+        }
+<span class="nc bnc" id="L228" title="All 2 branches missed.">        if (request.getStatus() != FriendRequestStatus.PENDING) {</span>
+<span class="nc" id="L229">            throw new AppException(ErrorCode.FRIEND_REQUEST_NOT_PENDING);</span>
+        }
+<span class="nc" id="L231">        request.setStatus(FriendRequestStatus.CANCELLED);</span>
+
+<span class="nc" id="L233">        request.setUpdatedAt(Instant.now());</span>
+
+<span class="nc" id="L235">        friendRequestRepository.save(request);</span>
+<span class="nc" id="L236">    }</span>
+
+    // Xóa bạn
+
+    public void removeFriend(String friendUserId) {
+        String currentId =
+<span class="nc" id="L242">                SecurityContextHolder.getContext().getAuthentication().getName();</span>
+
+<span class="nc" id="L244">        FriendRequest friendShip = findAcceptedFriendship(currentId, friendUserId);</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">        if (friendShip == null) {</span>
+<span class="nc" id="L246">            throw new AppException(ErrorCode.NOT_FRIENDS);</span>
+        }
+<span class="nc" id="L248">        friendShip.setStatus(FriendRequestStatus.CANCELLED);</span>
+<span class="nc" id="L249">        friendShip.setUpdatedAt(Instant.now());</span>
+<span class="nc" id="L250">        friendRequestRepository.save(friendShip);</span>
+
+<span class="nc" id="L252">        outboxEventService.recordEvent(</span>
+<span class="nc" id="L253">                friendShip.getId(), OutboxEventType.FRIEND_REMOVED, toEnrichedResponse(friendShip));</span>
+<span class="nc" id="L254">    }</span>
+
+    // Lấy danh sách bạn bè
+
+    public List&lt;FriendResponse&gt; getFriend() {
+        String currentId =
+<span class="nc" id="L260">                SecurityContextHolder.getContext().getAuthentication().getName();</span>
+<span class="nc" id="L261">        List&lt;FriendRequest&gt; friendShip =</span>
+<span class="nc" id="L262">                friendRequestRepository.findBySenderIdAndStatus(currentId, FriendRequestStatus.ACCEPTED);</span>
+
+<span class="nc" id="L264">        List&lt;FriendRequest&gt; receivedFriendships =</span>
+<span class="nc" id="L265">                friendRequestRepository.findByReceiverIdAndStatus(currentId, FriendRequestStatus.ACCEPTED);</span>
+
+<span class="nc" id="L267">        return Stream.concat(friendShip.stream(), receivedFriendships.stream())</span>
+<span class="nc" id="L268">                .map(friendship -&gt; {</span>
+<span class="nc" id="L269">                    String friendUserId = getOrderUserId(friendship, currentId);</span>
+
+<span class="nc" id="L271">                    UserProfileResponse profile = getProfile(friendUserId);</span>
+
+<span class="nc" id="L273">                    return friendMapper.toFriendResponse(friendUserId, FriendRequestStatus.ACCEPTED.name(), profile);</span>
+                })
+<span class="nc" id="L275">                .toList();</span>
+    }
+
+    // idea-spec Phase 3 - &quot;5. Global Feed&quot; (feed theo bạn bè): endpoint internal cho
+    // post-service lấy list userId bạn bè để lọc feed, không cần enrich username/avatar
+    // (khác getFriend() ở trên - endpoint đó phục vụ FE, cần enrich; đây chỉ cần ID để filter).
+    public List&lt;String&gt; getFriendUserIds(String userId) {
+<span class="nc" id="L282">        List&lt;FriendRequest&gt; friendShip =</span>
+<span class="nc" id="L283">                friendRequestRepository.findBySenderIdAndStatus(userId, FriendRequestStatus.ACCEPTED);</span>
+
+<span class="nc" id="L285">        List&lt;FriendRequest&gt; receivedFriendships =</span>
+<span class="nc" id="L286">                friendRequestRepository.findByReceiverIdAndStatus(userId, FriendRequestStatus.ACCEPTED);</span>
+
+<span class="nc" id="L288">        return Stream.concat(friendShip.stream(), receivedFriendships.stream())</span>
+<span class="nc" id="L289">                .map(friendship -&gt; getOrderUserId(friendship, userId))</span>
+<span class="nc" id="L290">                .toList();</span>
+    }
+
+    // Lấy request nhận được
+    public List&lt;FriendRequestResponse&gt; getReceiveRequest() {
+        String currentId =
+<span class="nc" id="L296">                SecurityContextHolder.getContext().getAuthentication().getName();</span>
+
+<span class="nc" id="L298">        return friendRequestRepository.findByReceiverIdAndStatus(currentId, FriendRequestStatus.PENDING).stream()</span>
+<span class="nc" id="L299">                .map(this::toEnrichedResponse)</span>
+<span class="nc" id="L300">                .toList();</span>
+    }
+
+    // Lấy request đã gửi
+
+    public List&lt;FriendRequestResponse&gt; getSentRequests() {
+        String currentId =
+<span class="nc" id="L307">                SecurityContextHolder.getContext().getAuthentication().getName();</span>
+
+<span class="nc" id="L309">        return friendRequestRepository.findBySenderIdAndStatus(currentId, FriendRequestStatus.PENDING).stream()</span>
+<span class="nc" id="L310">                .map(this::toEnrichedResponse)</span>
+<span class="nc" id="L311">                .toList();</span>
+    }
+
+    // Kiểm tra trạng thái friendship
+
+    public FriendResponse getFriendshipStatus(String otherUserId) {
+        String currentId =
+<span class="nc" id="L318">                SecurityContextHolder.getContext().getAuthentication().getName();</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">        if (blockRepository.existsByBlockerIdAndBlockedId(currentId, otherUserId)) {</span>
+<span class="nc" id="L320">            UserProfileResponse profile = getProfile(otherUserId);</span>
+<span class="nc" id="L321">            return friendMapper.toFriendResponse(otherUserId, &quot;BLOCKED&quot;, profile);</span>
+        }
+<span class="nc bnc" id="L323" title="All 2 branches missed.">        if (blockRepository.existsByBlockerIdAndBlockedId(otherUserId, currentId)) {</span>
+<span class="nc" id="L324">            UserProfileResponse profile = getProfile(otherUserId);</span>
+<span class="nc" id="L325">            return friendMapper.toFriendResponse(otherUserId, &quot;BLOCKED_BY&quot;, profile);</span>
+        }
+
+<span class="nc bnc" id="L328" title="All 2 branches missed.">        if (currentId.equals(otherUserId)) {</span>
+<span class="nc" id="L329">            throw new AppException(ErrorCode.CANNOT_FRIEND_YOURSELF);</span>
+        }
+
+        // nếu là bạn
+<span class="nc" id="L333">        FriendRequest friendship = findAcceptedFriendship(currentId, otherUserId);</span>
+<span class="nc bnc" id="L334" title="All 2 branches missed.">        if (friendship != null) {</span>
+<span class="nc" id="L335">            UserProfileResponse profile = getProfile(otherUserId);</span>
+
+<span class="nc" id="L337">            return friendMapper.toFriendResponse(otherUserId, FriendRequestStatus.ACCEPTED.name(), profile);</span>
+        }
+
+        // current user đã gửi request
+<span class="nc" id="L341">        FriendRequest sentRequest = friendRequestRepository</span>
+<span class="nc" id="L342">                .findBySenderIdAndReceiverIdAndStatus(currentId, otherUserId, FriendRequestStatus.PENDING)</span>
+<span class="nc" id="L343">                .orElse(null);</span>
+<span class="nc bnc" id="L344" title="All 2 branches missed.">        if (sentRequest != null) {</span>
+<span class="nc" id="L345">            UserProfileResponse profile = getProfile(otherUserId);</span>
+
+<span class="nc" id="L347">            return friendMapper.toFriendResponse(otherUserId, &quot;PENDING_SENT&quot;, profile);</span>
+        }
+
+        // current user đã nhận request
+
+<span class="nc" id="L352">        FriendRequest receivedRequest = friendRequestRepository</span>
+<span class="nc" id="L353">                .findBySenderIdAndReceiverIdAndStatus(otherUserId, currentId, FriendRequestStatus.PENDING)</span>
+<span class="nc" id="L354">                .orElse(null);</span>
+<span class="nc bnc" id="L355" title="All 2 branches missed.">        if (receivedRequest != null) {</span>
+<span class="nc" id="L356">            UserProfileResponse profile = getProfile(otherUserId);</span>
+
+<span class="nc" id="L358">            return friendMapper.toFriendResponse(otherUserId, &quot;PENDING_RECEIVED&quot;, profile);</span>
+        }
+
+<span class="nc" id="L361">        UserProfileResponse profile = getProfile(otherUserId);</span>
+
+<span class="nc" id="L363">        return friendMapper.toFriendResponse(otherUserId, &quot;NONE&quot;, profile);</span>
+    }
+
+    public List&lt;BlockResponse&gt; getBlockedUsers() {
+        String currentUserId =
+<span class="nc" id="L368">                SecurityContextHolder.getContext().getAuthentication().getName();</span>
+
+<span class="nc" id="L370">        List&lt;Block&gt; blocks = blockRepository.findByBlockerId(currentUserId);</span>
+
+<span class="nc" id="L372">        return blocks.stream()</span>
+<span class="nc" id="L373">                .map(block -&gt; {</span>
+<span class="nc" id="L374">                    UserProfileResponse profile = getProfile(block.getBlockedId());</span>
+
+<span class="nc" id="L376">                    return blockMapper.toBlockResponse(block.getBlockedId(), block.getCreatedAt(), profile);</span>
+                })
+<span class="nc" id="L378">                .toList();</span>
+    }
+
+    private void cancelFriendRelationship(String userId1, String userId2) {
+
+        // A-&gt; B
+<span class="nc" id="L384">        FriendRequest requestA = friendRequestRepository</span>
+<span class="nc" id="L385">                .findBySenderIdAndReceiverId(userId1, userId2)</span>
+<span class="nc" id="L386">                .orElse(null);</span>
+<span class="nc bnc" id="L387" title="All 2 branches missed.">        if (requestA != null</span>
+<span class="nc bnc" id="L388" title="All 2 branches missed.">                &amp;&amp; (requestA.getStatus() == FriendRequestStatus.PENDING</span>
+<span class="nc bnc" id="L389" title="All 2 branches missed.">                        || requestA.getStatus() == FriendRequestStatus.ACCEPTED)) {</span>
+<span class="nc" id="L390">            requestA.setStatus(FriendRequestStatus.CANCELLED);</span>
+<span class="nc" id="L391">            requestA.setUpdatedAt(Instant.now());</span>
+
+<span class="nc" id="L393">            friendRequestRepository.save(requestA);</span>
+        }
+        // B -&gt; A
+<span class="nc" id="L396">        FriendRequest requestB = friendRequestRepository</span>
+<span class="nc" id="L397">                .findBySenderIdAndReceiverId(userId2, userId1)</span>
+<span class="nc" id="L398">                .orElse(null);</span>
+<span class="nc bnc" id="L399" title="All 2 branches missed.">        if (requestB != null</span>
+<span class="nc bnc" id="L400" title="All 2 branches missed.">                &amp;&amp; (requestB.getStatus() == FriendRequestStatus.PENDING</span>
+<span class="nc bnc" id="L401" title="All 2 branches missed.">                        || requestB.getStatus() == FriendRequestStatus.ACCEPTED)) {</span>
+<span class="nc" id="L402">            requestB.setStatus(FriendRequestStatus.CANCELLED);</span>
+<span class="nc" id="L403">            requestB.setUpdatedAt(Instant.now());</span>
+
+<span class="nc" id="L405">            friendRequestRepository.save(requestB);</span>
+        }
+<span class="nc" id="L407">    }</span>
+
+    private void checkUserExists(String userId) {
+<span class="nc" id="L410">        getProfile(userId);</span>
+<span class="nc" id="L411">    }</span>
+
+    private UserProfileResponse getProfileByUsername(String username) {
+        // profile-service trả 404 thật (không phải body rỗng dạng 200) khi username không tồn
+        // tại — Feign mặc định ném FeignException.NotFound cho status 404, trước đây không bắt
+        // nên thoát ra thành lỗi 500-class chung chung (9999) thay vì USER_NOT_FOUND rõ ràng.
+        try {
+<span class="nc" id="L418">            var response = profileClient.getProfileByUsername(username);</span>
+<span class="nc bnc" id="L419" title="All 4 branches missed.">            if (response == null || response.getResult() == null) {</span>
+<span class="nc" id="L420">                throw new AppException(ErrorCode.USER_NOT_FOUND);</span>
+            }
+<span class="nc" id="L422">            return response.getResult();</span>
+<span class="nc" id="L423">        } catch (FeignException.NotFound e) {</span>
+<span class="nc" id="L424">            throw new AppException(ErrorCode.USER_NOT_FOUND);</span>
+        }
+    }
+
+    private String getOrderUserId(FriendRequest friendship, String currentUserId) {
+<span class="nc bnc" id="L429" title="All 2 branches missed.">        if (friendship.getSenderId().equals(currentUserId)) {</span>
+<span class="nc" id="L430">            return friendship.getReceiverId();</span>
+        }
+<span class="nc" id="L432">        return friendship.getSenderId();</span>
+    }
+
+    private FriendRequest getFriendRequest(String requestId) {
+<span class="nc" id="L436">        return friendRequestRepository</span>
+<span class="nc" id="L437">                .findById(requestId)</span>
+<span class="nc" id="L438">                .orElseThrow(() -&gt; new AppException(ErrorCode.FRIEND_REQUEST_NOT_FOUND));</span>
+    }
+
+    private UserProfileResponse getProfile(String userId) {
+<span class="nc" id="L442">        var response = profileClient.getProfile(userId);</span>
+<span class="nc bnc" id="L443" title="All 4 branches missed.">        if (response == null || response.getResult() == null) {</span>
+<span class="nc" id="L444">            throw new AppException(ErrorCode.USER_NOT_FOUND);</span>
+        }
+<span class="nc" id="L446">        return response.getResult();</span>
+    }
+
+    // Gắn thêm senderUsername/senderAvatar vào FriendRequestResponse, dùng chung
+    // cho cả response trả về REST lẫn payload ghi vào Outbox (Kafka), để bên nhận
+    // (FE, chat-service) không còn phải nhận senderId thô không kèm username.
+    private FriendRequestResponse toEnrichedResponse(FriendRequest entity) {
+<span class="nc" id="L453">        UserProfileResponse senderProfile = getProfile(entity.getSenderId());</span>
+<span class="nc" id="L454">        return friendMapper.toFriendRequestResponse(entity, senderProfile);</span>
+    }
+
+    private FriendRequest findAcceptedFriendship(String userId1, String userId2) {
+<span class="nc" id="L458">        FriendRequest first = friendRequestRepository</span>
+<span class="nc" id="L459">                .findBySenderIdAndReceiverIdAndStatus(userId1, userId2, FriendRequestStatus.ACCEPTED)</span>
+<span class="nc" id="L460">                .orElse(null);</span>
+<span class="nc bnc" id="L461" title="All 2 branches missed.">        if (first != null) {</span>
+<span class="nc" id="L462">            return first;</span>
+        }
+<span class="nc" id="L464">        return friendRequestRepository</span>
+<span class="nc" id="L465">                .findBySenderIdAndReceiverIdAndStatus(userId2, userId1, FriendRequestStatus.ACCEPTED)</span>
+<span class="nc" id="L466">                .orElse(null);</span>
+    }
+
+    private boolean isFriend(String userId1, String userId2) {
+<span class="nc bnc" id="L470" title="All 2 branches missed.">        return findAcceptedFriendship(userId1, userId2) != null;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.15.202606040825</span></div></body></html>

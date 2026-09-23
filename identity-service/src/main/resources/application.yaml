@@ -1,0 +1,91 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /identity
+    session:
+      cookie:
+        path: /
+
+spring:
+  datasource:
+    url: "jdbc:mysql://localhost:3306/bookteria_identity"
+    driverClassName: "com.mysql.cj.jdbc.Driver"
+    username: root
+    password: 123456
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: true
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: "1"
+    locations: classpath:db/migration
+
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        # idea-spec BA GAP-01: bug thật bắt được lúc verify live — identity-service là service
+        # DUY NHẤT trong dự án publish Kafka mà KHÔNG tắt add.type.headers (mọi service khác:
+        # friend/group/post/book/reading đều có dòng này). Vì thiếu, JsonSerializer tự stamp tên
+        # class thật (vd "com.devteria.identity.dto.OutboxEventMessage") vào header __TypeId__ —
+        # class đó không tồn tại trên classpath của BẤT KỲ consumer nào khác trong dự án, nên
+        # ErrorHandlingDeserializer ném ClassNotFoundException thật (KHÔNG tự fallback êm về
+        # spring.json.value.default.type như lầm tưởng ban đầu — đã verify: message rơi thẳng
+        # vào .dlt). Consume "notification-delivery" ở notification-service vì vậy luôn thất bại
+        # kể từ khi đổi sang Outbox (welcome email/notification không bao giờ tới) cho tới khi
+        # sửa dòng này.
+        spring.json.add.type.headers: false
+    consumer:
+      group-id: identity-service
+      auto-offset-reset: earliest
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
+        spring.json.trusted.packages: "*"
+        spring.json.value.default.type: com.devteria.identity.dto.KafkaAdminCommandEvent
+
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: ${GOOGLE_CLIENT_ID}
+            # Không hardcode secret thật vào file được commit lên git - set biến môi trường
+            # GOOGLE_CLIENT_SECRET (vd .env local hoặc run config của IDE) trước khi chạy service.
+            # Default rỗng (không phải bắt buộc) để context vẫn khởi động sạch (kể cả lúc chạy
+            # test) khi chưa set - Google login sẽ chỉ thật sự lỗi lúc người dùng bấm đăng nhập,
+            # không chặn boot/test, cùng cách google.books.api-key bên book-service đã làm.
+            client-secret: ${GOOGLE_CLIENT_SECRET}
+            scope:
+              - openid
+              - profile
+              - email
+            redirect-uri: "http://localhost:8888/api/v1/identity/login/oauth2/code/google"
+
+jwt:
+  signerKey: "1TjXchw5FloESb63Kc+DFhTARvpWL4jUGCwfGWxuG5SIf/1y/LgJxHnMqaF6A/ij"
+
+app:
+  services:
+    profile: http://localhost:8081/profile
+  oauth2:
+    redirect-uri: http://localhost:3000/oauth2/redirect
+
+logging:
+  level:
+    org.springframework.security: TRACE
+
+management:
+  endpoint:
+    health:
+      show-details: always
+  endpoints:
+    web:
+      exposure:
+        include: health,info

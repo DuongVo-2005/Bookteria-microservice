@@ -1,0 +1,45 @@
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <property name="SERVICE_NAME" value="identity-service"/>
+    <property name="LOKI_URL" value="${LOKI_URL:-http://localhost:3100/loki/api/v1/push}"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${CONSOLE_LOG_PATTERN}</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Gửi log trực tiếp sang Loki (không qua Promtail vì service chạy trực tiếp, không
+         phải container). OpenTelemetry Java agent (-javaagent) tự bơm trace_id/span_id vào
+         Loki dưới dạng STREAM LABEL (không phải MDC %X) - verify runtime thật xác nhận: filter
+         Grafana/Loki theo {trace_id="..."} là nhảy đúng sang trace tương ứng trên Jaeger. -->
+    <!-- Chỉ bật lúc chạy thật (không phải "test") - Loki4jAppender ghi ERROR vào StatusManager
+         dùng chung của LoggerContext khi không kết nối được Loki, và Spring Boot's
+         reportConfigurationErrorsIfNecessary() coi bất kỳ ERROR status nào cũng là lỗi cấu hình
+         fatal, sập luôn ApplicationContext của mọi @SpringBootTest (bug thật bắt được lúc chạy
+         `mvn test` không có Docker/Loki - 15/22 test lỗi). Test không nên phụ thuộc hạ tầng ngoài. -->
+    <springProfile name="!test">
+        <appender name="LOKI" class="com.github.loki4j.logback.Loki4jAppender">
+            <http>
+                <url>${LOKI_URL}</url>
+            </http>
+            <labels>app=${SERVICE_NAME}</labels>
+            <message class="ch.qos.logback.classic.PatternLayout">
+                <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            </message>
+        </appender>
+    </springProfile>
+
+    <springProfile name="!test">
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="LOKI"/>
+        </root>
+    </springProfile>
+    <springProfile name="test">
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+    </springProfile>
+</configuration>

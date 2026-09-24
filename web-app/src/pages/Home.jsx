@@ -283,7 +283,7 @@ export default function Home() {
     }
 
     setHasMore(false);
-  }, [hasMore]);
+  }, [hasMore, page, totalPages]);
 
   return (
     <Scene>

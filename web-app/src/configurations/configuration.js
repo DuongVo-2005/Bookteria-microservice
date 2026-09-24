@@ -1,6 +1,9 @@
+// Đọc từ biến môi trường REACT_APP_* lúc build (CRA nhúng giá trị vào bundle
+// tại thời điểm `npm run build`, không đọc lại lúc runtime) — xem .env.example.
+// Giá trị mặc định giữ nguyên cấu hình local dev trước đây.
 export const CONFIG = {
-  API_GATEWAY: "http://localhost:8888/api/v1",
-  SOCKET_URL: "http://localhost:8099",
+  API_GATEWAY: process.env.REACT_APP_API_GATEWAY || "http://localhost:8888/api/v1",
+  SOCKET_URL: process.env.REACT_APP_SOCKET_URL || "http://localhost:8099",
 };
 
 export const API = {

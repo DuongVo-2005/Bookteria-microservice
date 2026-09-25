@@ -10,7 +10,7 @@ spring:
 
   data:
     redis:
-      host: ${REDIS_HOST:localhost}
+      host: ${REDIS_HOST:bookteria-redis}
       port: ${REDIS_PORT:6379}
 
   cloud:
@@ -25,84 +25,84 @@ spring:
 
           routes:
             - id: identity-service
-              uri: ${IDENTITY_SERVICE_URL:http://localhost:8080}
+              uri: ${IDENTITY_SERVICE_URL:http://bookteria-identity-service:8080}
               predicates:
                 - Path=${app.api-prefix}/identity/**
               filters:
                 - StripPrefix=2
 
             - id: profile-service
-              uri: ${PROFILE_SERVICE_URL:http://localhost:8081}
+              uri: ${PROFILE_SERVICE_URL:http://bookteria-profile-service:8081}
               predicates:
                 - Path=${app.api-prefix}/profile/users/**
               filters:
                 - StripPrefix=2
 
             - id: notification-service
-              uri: ${NOTIFICATION_SERVICE_URL:http://localhost:8082}
+              uri: ${NOTIFICATION_SERVICE_URL:http://bookteria-notification-service:8082}
               predicates:
                 - Path=${app.api-prefix}/notification/**
               filters:
                 - StripPrefix=2
 
             - id: post-service
-              uri: ${POST_SERVICE_URL:http://localhost:8083}
+              uri: ${POST_SERVICE_URL:http://bookteria-post-service:8083}
               predicates:
                 - Path=${app.api-prefix}/post/**
               filters:
                 - StripPrefix=2
 
             - id: file-service
-              uri: ${FILE_SERVICE_URL:http://localhost:8084}
+              uri: ${FILE_SERVICE_URL:http://bookteria-file-service:8084}
               predicates:
                 - Path=${app.api-prefix}/file/**
               filters:
                 - StripPrefix=2
 
             - id: chat-service
-              uri: ${CHAT_SERVICE_URL:http://localhost:8085}
+              uri: ${CHAT_SERVICE_URL:http://bookteria-chat-service:8085}
               predicates:
                 - Path=${app.api-prefix}/chat/**
               filters:
                 - StripPrefix=2
 
             - id: search-service
-              uri: ${SEARCH_SERVICE_URL:http://localhost:8086}
+              uri: ${SEARCH_SERVICE_URL:http://bookteria-search-service:8086}
               predicates:
                 - Path=${app.api-prefix}/search/**
               filters:
                 - StripPrefix=2
 
             - id: book-service
-              uri: ${BOOK_SERVICE_URL:http://localhost:8087}
+              uri: ${BOOK_SERVICE_URL:http://bookteria-book-service:8087}
               predicates:
                 - Path=${app.api-prefix}/book/**
               filters:
                 - StripPrefix=2
 
             - id: friend-service
-              uri: ${FRIEND_SERVICE_URL:http://localhost:8088}
+              uri: ${FRIEND_SERVICE_URL:http://bookteria-friend-service:8088}
               predicates:
                 - Path=${app.api-prefix}/friend/**
               filters:
                 - StripPrefix=2
 
             - id: group-service
-              uri: ${GROUP_SERVICE_URL:http://localhost:8089}
+              uri: ${GROUP_SERVICE_URL:http://bookteria-group-service:8089}
               predicates:
                 - Path=${app.api-prefix}/group/**
               filters:
                 - StripPrefix=2
 
             - id: reading-service
-              uri: ${READING_SERVICE_URL:http://localhost:8090}
+              uri: ${READING_SERVICE_URL:http://bookteria-reading-service:8090}
               predicates:
                 - Path=${app.api-prefix}/reading/**
               filters:
                 - StripPrefix=2
 
             - id: report-service
-              uri: ${REPORT_SERVICE_URL:http://localhost:8091}
+              uri: ${REPORT_SERVICE_URL:http://bookteria-report-service:8091}
               predicates:
                 - Path=${app.api-prefix}/report/**
               filters:

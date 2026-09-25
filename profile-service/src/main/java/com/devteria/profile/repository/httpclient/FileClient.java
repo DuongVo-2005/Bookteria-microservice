@@ -12,7 +12,7 @@ import com.devteria.profile.dto.response.FileResponse;
 
 @FeignClient(
         name = "file-service",
-        url = "http://localhost:8084",
+        url = "${app.services.file}",
         configuration = {AuthenticationRequestInterceptor.class})
 public interface FileClient {
     @PostMapping(value = "/file/media/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

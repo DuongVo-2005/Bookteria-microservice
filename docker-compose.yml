@@ -1,3 +1,17 @@
+x-app-env: &app-env
+  JWT_SIGNER_KEY: ${JWT_SIGNER_KEY}
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  LOKI_URL: http://bookteria-loki:3100/loki/api/v1/push
+  # 8GB VM, 13 JVMs: cap heap relative to mem_limit, lightweight GC, C1-only JIT (much less CPU at startup)
+  JAVA_TOOL_OPTIONS: >-
+    -XX:MaxRAMPercentage=65 -XX:+UseSerialGC -XX:TieredStopAtLevel=1
+    -Xss512k -XX:ReservedCodeCacheSize=48m -XX:MaxMetaspaceSize=192m
+
+x-java-service: &java-service
+  restart: unless-stopped
+  mem_limit: 420m
+  cpus: 1.0
+
 services:
   mongodb:
    image: mongo:8
@@ -5,9 +19,11 @@ services:
    restart: unless-stopped
    environment:
      MONGO_INITDB_ROOT_USERNAME: root
-     MONGO_INITDB_ROOT_PASSWORD: 123456
+     MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+   command: ["--wiredTigerCacheSizeGB", "0.25"]
+   mem_limit: 600m
    ports:
-     - "27017:27017"
+     - "127.0.0.1:27017:27017"
    volumes:
       - mongo_data:/data/db
   mysql:
@@ -15,10 +31,12 @@ services:
     container_name: bookteria-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: bookteria_identity
+    command: ["--performance-schema=OFF", "--innodb-buffer-pool-size=128M"]
+    mem_limit: 500m
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
   neo4j:
@@ -26,10 +44,14 @@ services:
     container_name: bookteria-neo4j
     restart: unless-stopped
     environment:
-      NEO4J_AUTH: neo4j/12345678
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD}
+      NEO4J_server_memory_heap_initial__size: 256m
+      NEO4J_server_memory_heap_max__size: 384m
+      NEO4J_server_memory_pagecache_size: 128m
+    mem_limit: 750m
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
@@ -37,10 +59,12 @@ services:
   kafka:
    image: apache/kafka:4.3.1
    container_name: kafka
+   restart: unless-stopped
+   mem_limit: 700m
    ports:
-     - "9092:9092"
-     - "29092:29092"
+     - "127.0.0.1:29092:29092"
    environment:
+     KAFKA_HEAP_OPTS: -Xms256m -Xmx384m
      KAFKA_NODE_ID: 1
      KAFKA_PROCESS_ROLES: broker,controller
 
@@ -66,16 +90,20 @@ services:
       - discovery.type=single-node
       - xpack.security.enabled=false
       - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    restart: unless-stopped
+    mem_limit: 1100m
     ports:
-      - "9200:9200"
+      - "127.0.0.1:9200:9200"
     volumes:
       - es_data:/usr/share/elasticsearch/data
 
   redis:
     image: redis:7-alpine
     container_name: bookteria-redis
+    restart: unless-stopped
+    mem_limit: 128m
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
 
@@ -84,9 +112,10 @@ services:
   jaeger:
     image: jaegertracing/all-in-one:latest
     container_name: bookteria-jaeger
+    profiles: [observability]
     ports:
-      - "16686:16686"
-      - "4318:4318"
+      - "127.0.0.1:16686:16686"
+      - "127.0.0.1:4318:4318"
     environment:
       - COLLECTOR_OTLP_ENABLED=true
 
@@ -95,8 +124,10 @@ services:
   loki:
     image: grafana/loki:3.2.0
     container_name: bookteria-loki
+    restart: unless-stopped
+    mem_limit: 256m
     ports:
-      - "3100:3100"
+      - "127.0.0.1:3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
 
   # Dashboard chung xem cả trace (Jaeger) lẫn log (Loki) — http://localhost:3001, đăng nhập ẩn danh
@@ -104,8 +135,9 @@ services:
   grafana:
     image: grafana/grafana:11.2.0
     container_name: bookteria-grafana
+    profiles: [observability]
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3001:3000"
     environment:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
@@ -115,6 +147,200 @@ services:
     depends_on:
       - jaeger
       - loki
+
+  # ---------- Application services ----------
+  identity-service:
+    build: ./identity-service
+    image: bookteria/identity-service:latest
+    container_name: bookteria-identity-service
+    <<: *java-service
+    environment:
+      <<: *app-env
+      DB_URL: jdbc:mysql://bookteria-mysql:3306/bookteria_identity
+      DB_USERNAME: root
+      DB_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      PROFILE_SERVICE_URL: http://bookteria-profile-service:8081/profile
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_REDIRECT_URI: ${PUBLIC_BASE_URL}/api/v1/identity/login/oauth2/code/google
+      OAUTH2_FRONTEND_REDIRECT_URI: ${PUBLIC_BASE_URL}/oauth2/redirect
+      LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_SECURITY: INFO
+    depends_on: [mysql, kafka]
+
+  profile-service:
+    build: ./profile-service
+    image: bookteria/profile-service:latest
+    container_name: bookteria-profile-service
+    <<: *java-service
+    environment:
+      <<: *app-env
+      NEO4J_URI: bolt://bookteria-neo4j:7687
+      NEO4J_USERNAME: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      REDIS_HOST: bookteria-redis
+      REDIS_PORT: "6379"
+      FILE_SERVICE_URL: http://bookteria-file-service:8084
+    depends_on: [neo4j, redis]
+
+  notification-service:
+    build: ./notification-service
+    image: bookteria/notification-service:latest
+    container_name: bookteria-notification-service
+    <<: *java-service
+    environment:
+      <<: *app-env
+      MONGODB_URI: mongodb://root:${MONGO_ROOT_PASSWORD}@bookteria-mongodb:27017/notification-service?authSource=admin
+      PROFILE_SERVICE_URL: http://bookteria-profile-service:8081/profile
+      # ⚠️ PLACEHOLDER from .env — service starts, but email sending will NOT work
+      BREVO_API_KEY: ${BREVO_API_KEY}
+    depends_on: [mongodb, kafka]
+
+  post-service:
+    build: ./post-service
+    image: bookteria/post-service:latest
+    container_name: bookteria-post-service
+    <<: *java-service
+    environment:
+      <<: *app-env
+      MONGODB_URI: mongodb://root:${MONGO_ROOT_PASSWORD}@bookteria-mongodb:27017/post-service?authSource=admin
+      PROFILE_SERVICE_URL: http://bookteria-profile-service:8081/profile
+      FRIEND_SERVICE_URL: http://bookteria-friend-service:8088/friend
+      BOOK_SERVICE_URL: http://bookteria-book-service:8087/book
+    depends_on: [mongodb, kafka]
+
+  file-service:
+    build: ./file-service
+    image: bookteria/file-service:latest
+    container_name: bookteria-file-service
+    <<: *java-service
+    environment:
+      <<: *app-env
+      MONGODB_URI: mongodb://root:${MONGO_ROOT_PASSWORD}@bookteria-mongodb:27017/file-service?authSource=admin
+      FILE_STORAGE_DIR: /app/uploads
+      FILE_DOWNLOAD_PREFIX: ${PUBLIC_BASE_URL}/api/v1/file/media/download/
+    volumes:
+      - file_uploads:/app/uploads
+    depends_on: [mongodb]
+
+  chat-service:
+    build: ./chat-service
+    image: bookteria/chat-service:latest
+    container_name: bookteria-chat-service
+    <<: *java-service
+    environment:
+      <<: *app-env
+      MONGODB_URI: mongodb://root:${MONGO_ROOT_PASSWORD}@bookteria-mongodb:27017/chat-service?authSource=admin
+      IDENTITY_SERVICE_URL: http://bookteria-identity-service:8080/identity
+      PROFILE_SERVICE_URL: http://bookteria-profile-service:8081/profile
+      FRIEND_SERVICE_URL: http://bookteria-friend-service:8088/friend
+    depends_on: [mongodb, kafka]
+
+  search-service:
+    build: ./search-service
+    image: bookteria/search-service:latest
+    container_name: bookteria-search-service
+    <<: *java-service
+    environment:
+      <<: *app-env
+      ELASTICSEARCH_URI: http://bookteria-elasticsearch:9200
+      BOOK_SERVICE_URL: http://bookteria-book-service:8087/book
+      GROUP_SERVICE_URL: http://bookteria-group-service:8089/group
+      POST_SERVICE_URL: http://bookteria-post-service:8083/post
+    depends_on: [elasticsearch, kafka]
+
+  book-service:
+    build: ./book-service
+    image: bookteria/book-service:latest
+    container_name: bookteria-book-service
+    <<: *java-service
+    environment:
+      <<: *app-env
+      MONGO_HOST: bookteria-mongodb
+      MONGO_PORT: "27017"
+      MONGO_USERNAME: root
+      MONGO_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      REDIS_HOST: bookteria-redis
+      REDIS_PORT: "6379"
+      FRIEND_SERVICE_URL: http://bookteria-friend-service:8088/friend
+      GOOGLE_BOOKS_API_KEY: ${GOOGLE_BOOKS_API_KEY:-}
+    depends_on: [mongodb, kafka, redis]
+
+  friend-service:
+    build: ./friend-service
+    image: bookteria/friend-service:latest
+    container_name: bookteria-friend-service
+    <<: *java-service
+    environment:
+      <<: *app-env
+      MONGODB_URI: mongodb://root:${MONGO_ROOT_PASSWORD}@bookteria-mongodb:27017/friend-service?authSource=admin
+      PROFILE_SERVICE_URL: http://bookteria-profile-service:8081/profile
+    depends_on: [mongodb, kafka]
+
+  group-service:
+    build: ./group-service
+    image: bookteria/group-service:latest
+    container_name: bookteria-group-service
+    <<: *java-service
+    environment:
+      <<: *app-env
+      MONGODB_URI: mongodb://root:${MONGO_ROOT_PASSWORD}@bookteria-mongodb:27017/group-service?authSource=admin
+      PROFILE_SERVICE_URL: http://bookteria-profile-service:8081/profile
+      BOOK_SERVICE_URL: http://bookteria-book-service:8087/book
+    depends_on: [mongodb, kafka]
+
+  reading-service:
+    build: ./reading-service
+    image: bookteria/reading-service:latest
+    container_name: bookteria-reading-service
+    <<: *java-service
+    environment:
+      <<: *app-env
+      MONGODB_URI: mongodb://root:${MONGO_ROOT_PASSWORD}@bookteria-mongodb:27017/reading-service?authSource=admin
+      BOOK_SERVICE_URL: http://bookteria-book-service:8087/book
+      POST_SERVICE_URL: http://bookteria-post-service:8083/post
+    depends_on: [mongodb, kafka]
+
+  report-service:
+    build: ./report-service
+    image: bookteria/report-service:latest
+    container_name: bookteria-report-service
+    <<: *java-service
+    environment:
+      <<: *app-env
+      MONGODB_URI: mongodb://root:${MONGO_ROOT_PASSWORD}@bookteria-mongodb:27017/report-service?authSource=admin
+      PROFILE_SERVICE_URL: http://bookteria-profile-service:8081/profile
+      POST_SERVICE_URL: http://bookteria-post-service:8083/post
+      GROUP_SERVICE_URL: http://bookteria-group-service:8089/group
+      BOOK_SERVICE_URL: http://bookteria-book-service:8087/book
+    depends_on: [mongodb, kafka]
+
+  api-gateway:
+    build: ./api-gateway
+    image: bookteria/api-gateway:latest
+    container_name: bookteria-api-gateway
+    <<: *java-service
+    mem_limit: 380m
+    environment:
+      JAVA_TOOL_OPTIONS: >-
+        -XX:MaxRAMPercentage=65 -XX:+UseSerialGC -XX:TieredStopAtLevel=1
+        -Xss512k -XX:ReservedCodeCacheSize=48m -XX:MaxMetaspaceSize=160m
+    ports:
+      - "127.0.0.1:8888:8888"
+    depends_on: [redis, identity-service]
+
+  web-app:
+    build:
+      context: ./web-app
+      args:
+        REACT_APP_API_GATEWAY: /api/v1
+        REACT_APP_SOCKET_URL: ${PUBLIC_BASE_URL}
+    image: bookteria/web-app:latest
+    container_name: bookteria-web
+    restart: unless-stopped
+    mem_limit: 64m
+    ports:
+      - "3000:80"
+    depends_on: [api-gateway, chat-service]
 
 volumes:
   redis_data:
@@ -128,3 +354,4 @@ volumes:
     name: bookteria-microservice_neo4j_data
   neo4j_logs:
     name: bookteria-microservice_neo4j_logs
+  file_uploads:

@@ -15,12 +15,18 @@ import reactor.core.publisher.Mono;
 @Configuration
 public class RateLimiterConfig {
 
+    // Sau Nginx reverse proxy, remote address luôn là IP của Nginx -> ưu tiên X-Real-IP do Nginx
+    // ghi đè (client không tự đặt được vì gateway không public ra ngoài).
     @Bean
     public KeyResolver ipKeyResolver() {
-        return exchange -> Mono.just(exchange.getRequest().getRemoteAddress() != null
+        return exchange -> {
+            String realIp = exchange.getRequest().getHeaders().getFirst("X-Real-IP");
+            if (realIp != null && !realIp.isBlank()) return Mono.just(realIp);
+            return Mono.just(exchange.getRequest().getRemoteAddress() != null
                         && exchange.getRequest().getRemoteAddress().getAddress() != null
                 ? exchange.getRequest().getRemoteAddress().getAddress().getHostAddress()
                 : "unknown");
+        };
     }
 
     @Bean

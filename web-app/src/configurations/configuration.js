@@ -45,10 +45,10 @@ export const API = {
   // Phase 6 (be-report.md, 2026-09-18).
   RECOMMENDATIONS: "/book/me/recommendations",
   // BA Backlog Phase 3 (be-report.md, bổ sung 2026-09-19): FEAT-01/FEAT-02.
-  ONBOARDING_PREFERENCES: "/book/onboarding/preferences",
+  ONBOARDING_PREFERENCES: "/book/me/onboarding",
   ACTIVE_READERS: "/book/reviews/active-readers",
   READING_CHALLENGE: "/book/me/reading-challenge",
-  READING_STREAK: "/reading/me/streak",
+  READING_STREAK: "/reading/progress/me/streak",
   AUTHORS: "/book/authors",
   CATEGORIES: "/book/categories",
   PUBLISHERS: "/book/publishers",

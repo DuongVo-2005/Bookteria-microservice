@@ -51,7 +51,7 @@ spring:
               - openid
               - profile
               - email
-            redirect-uri: "http://localhost:8888/api/v1/identity/login/oauth2/code/google"
+            redirect-uri: "${GOOGLE_REDIRECT_URI:http://localhost:8888/api/v1/identity/login/oauth2/code/google}"
 
 jwt:
   signerKey: "${JWT_SIGNER_KEY}"
@@ -60,7 +60,7 @@ app:
   services:
     profile: "${PROFILE_SERVICE_URL:http://localhost:8081/profile}"
   oauth2:
-    redirect-uri: http://localhost:3000/oauth2/redirect
+    redirect-uri: "${OAUTH2_FRONTEND_REDIRECT_URI:http://localhost:3000/oauth2/redirect}"
 
 logging:
   level:

@@ -1,6 +1,7 @@
 package com.devteria.gateway.configuration;
 
 import com.devteria.gateway.repository.IdentityClient;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.cors.CorsConfiguration;
@@ -16,16 +17,16 @@ import java.util.List;
 @Configuration
 public class WebClientConfiguration {
     @Bean
-    WebClient webClient(){
+    WebClient webClient(@Value("${IDENTITY_SERVICE_URL:http://bookteria-identity-service:8080}") String identityServiceUrl){
         return WebClient.builder()
-                .baseUrl("http://identity-service:8080/identity")
+                .baseUrl(identityServiceUrl + "/identity")
                 .build();
     }
 
     @Bean
     CorsWebFilter corsWebFilter(){
         CorsConfiguration corsConfiguration= new CorsConfiguration();
-        corsConfiguration.setAllowedOrigins(Arrays.asList("http://localhost:3000","http://localhost:4173","http://localhost:5173"));
+        corsConfiguration.setAllowedOrigins(Arrays.asList("http://localhost:3000","http://72.155.88.21:3000","http://localhost:4173","http://localhost:5173"));
         corsConfiguration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "PATCH", "DELETE","OPTIONS"));
         corsConfiguration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type","Accept"));
         corsConfiguration.setAllowCredentials(true);

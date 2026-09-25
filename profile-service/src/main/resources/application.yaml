@@ -2,12 +2,14 @@ server:
   port: 8081
   servlet:
     context-path: /profile
+
 spring:
   neo4j:
-    uri: bolt://localhost:7687
+    uri: ${NEO4J_URI:bolt://localhost:7687}
     authentication:
-      username: neo4j
-      password: 12345678
+      username: ${NEO4J_USERNAME:neo4j}
+      password: ${NEO4J_PASSWORD:12345678}
+
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -15,10 +17,10 @@ spring:
 
 app:
   services:
-    file: http://localhost:8084
+    file: ${FILE_SERVICE_URL:http://localhost:8084}
 
 jwt:
-  signerKey: "1TjXchw5FloESb63Kc+DFhTARvpWL4jUGCwfGWxuG5SIf/1y/LgJxHnMqaF6A/ij"
+  signerKey: "${JWT_SIGNER_KEY}"
 
 management:
   endpoint:

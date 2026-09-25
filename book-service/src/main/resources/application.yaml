@@ -2,9 +2,11 @@ server:
   port: 8087
   servlet:
     context-path: /book
+
 spring:
   application:
     name: book-service
+
   mongodb.uri: mongodb://${MONGO_USERNAME:root}:${MONGO_PASSWORD:123456}@${MONGO_HOST:localhost}:${MONGO_PORT:27017}/book-service?authSource=admin
 
   data:
@@ -13,6 +15,7 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
@@ -27,25 +30,25 @@ spring:
         spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
         spring.json.trusted.packages: "*"
         spring.json.value.default.type: com.devteria.book.dto.ReadingSyncEventMessage
+
 jwt:
-  signerKey: "1TjXchw5FloESb63Kc+DFhTARvpWL4jUGCwfGWxuG5SIf/1y/LgJxHnMqaF6A/ij"
+  signerKey: "${JWT_SIGNER_KEY}"
 
 google:
   books:
     base-url: https://www.googleapis.com/books/v1
-    api-key:  ${GOOGLE_BOOKS_API_KEY:}
+    api-key: ${GOOGLE_BOOKS_API_KEY:}
 
 app:
   service:
-    # idea-spec BA v2 §4.3 Shelf Privacy (FRIENDS_ONLY) - cùng giá trị friend-service đã dùng ở
-    # post-service's application.yaml.
     friend:
-      url: http://localhost:8088/friend
+      url: ${FRIEND_SERVICE_URL:http://localhost:8088/friend}
 
 management:
   endpoint:
     health:
       show-details: always
+
   endpoints:
     web:
       exposure:

@@ -2,11 +2,14 @@ server:
   port: 8090
   servlet:
     context-path: /reading
+
 spring:
   application:
     name: reading-service
+
   mongodb:
-    uri: mongodb://root:123456@localhost:27017/reading-service?authSource=admin
+    uri: ${MONGODB_URI:mongodb://root:123456@localhost:27017/reading-service?authSource=admin}
+
   data:
     mongodb:
       auto-index-creation: true
@@ -29,17 +32,18 @@ spring:
 app:
   service:
     post:
-      url: http://localhost:8083/post
+      url: ${POST_SERVICE_URL:http://localhost:8083/post}
     book:
-      url: http://localhost:8087/book
+      url: ${BOOK_SERVICE_URL:http://localhost:8087/book}
 
 jwt:
-  signerKey: "1TjXchw5FloESb63Kc+DFhTARvpWL4jUGCwfGWxuG5SIf/1y/LgJxHnMqaF6A/ij"
+  signerKey: "${JWT_SIGNER_KEY}"
 
 management:
   endpoint:
     health:
       show-details: always
+
   endpoints:
     web:
       exposure:

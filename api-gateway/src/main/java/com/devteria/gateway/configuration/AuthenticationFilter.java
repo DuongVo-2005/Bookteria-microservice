@@ -1,9 +1,7 @@
 package com.devteria.gateway.configuration;
 
-
 import com.devteria.gateway.dto.response.ApiResponse;
 import com.devteria.gateway.service.IdentityService;
-import io.netty.handler.codec.http.HttpResponseStatus;
 import lombok.AccessLevel;
 import lombok.RequiredArgsConstructor;
 import lombok.experimental.FieldDefaults;
@@ -22,7 +20,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
-import reactor.netty.http.server.HttpServerResponse;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
@@ -39,60 +36,118 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
 
     ObjectMapper objectMapper;
 
-    // idea-spec Phase 7 - "26. Security Hardening / API protection": bỏ "/book/.*" khỏi danh
-    // sách public - book-service's SecurityConfig (PUBLIC_ENDPOINTS rỗng) đòi JWT ở MỌI endpoint
-    // của chính nó rồi, nên wildcard này ở gateway không "mở" thêm gì cho user hợp lệ, mà chỉ
-    // BỎ QUA bước introspect() (kiểm tra token có bị revoke chưa - InvalidatedToken/Redis) cho
-    // toàn bộ book-service, kể cả các endpoint ADMIN mới thêm ở Phase 4-6. Hệ quả thật: user vừa
-    // bị Admin khoá tài khoản (§11 Session Revocation) vẫn gọi được book-service bình thường cho
-    // tới khi JWT tự hết hạn, vì revocation chỉ được check ở bước introspect() bị bypass bởi rule
-    // này - làm vô hiệu hoá đúng effect mà lockUser() tuyên bố "chặn ngay token hiện có". Xoá
-    // wildcard này khôi phục lại đúng hành vi introspect cho book-service, không phá vỡ luồng nào
-    // (client hợp lệ vẫn luôn phải gửi JWT để qua được security của chính book-service).
+    /**
+     * Các endpoint không yêu cầu JWT.
+     */
     @NonFinal
-    String[] publicEndpoints= {"/identity/auth/.*"
-            ,"/identity/users/registration",
+    String[] publicEndpoints = {
+            "/identity/auth/.*",
+            "/identity/users/registration",
             "/profile/users/search",
             "/notification/email/send",
             "/file/media/download/.*",
 
             // Google OAuth2
             "/identity/oauth2/.*",
-            "/identity/login/oauth2/.*",};
+            "/identity/login/oauth2/.*",
+
+            // Health check
+            "/identity/actuator/health"
+    };
 
     @Value("${app.api-prefix}")
     @NonFinal
     private String apiPrefix;
 
     @Override
-    public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+    public Mono<Void> filter(
+            ServerWebExchange exchange,
+            GatewayFilterChain chain
+    ) {
+
         log.info("Enter authentication filter");
 
-        if(isPublicEndpoints(exchange.getRequest())){
+        // Public endpoint -> không cần JWT
+        if (isPublicEndpoint(exchange.getRequest())) {
+            log.info(
+                    "Public endpoint: {}",
+                    exchange.getRequest().getURI().getPath()
+            );
+
             return chain.filter(exchange);
         }
 
-        //Get token from authorization header
-        List<String> authHeader = exchange.getRequest().getHeaders().get(HttpHeaders.AUTHORIZATION);
-        if(CollectionUtils.isEmpty(authHeader)){
-            return  unauthenticated(exchange.getResponse());
+        // Lấy Authorization header
+        List<String> authHeader = exchange
+                .getRequest()
+                .getHeaders()
+                .get(HttpHeaders.AUTHORIZATION);
+
+        // Không có Authorization header
+        if (CollectionUtils.isEmpty(authHeader)) {
+            log.warn("Missing Authorization header");
+
+            return unauthenticated(exchange.getResponse());
         }
-        String token = authHeader.getFirst().replace("Bearer ","");
 
-        //Verify token
-        //Delegate identity service
-         return identityService.introspect(token).flatMap(introspectResponseApiResponse -> {
-             if(introspectResponseApiResponse.getResult().isValid()){
-                 return chain.filter(exchange);
-             }
-             else{
-                 return unauthenticated(exchange.getResponse());
-             }
-         }).onErrorResume(throwable -> unauthenticated(exchange.getResponse()));
+        // Lấy Bearer token
+        String authorization = authHeader.getFirst();
 
+        if (authorization == null
+                || !authorization.startsWith("Bearer ")) {
+
+            log.warn("Invalid Authorization header");
+
+            return unauthenticated(exchange.getResponse());
+        }
+
+        String token = authorization.substring(7);
+
+        // JWT rỗng
+        if (token.isBlank()) {
+            log.warn("Empty JWT token");
+
+            return unauthenticated(exchange.getResponse());
+        }
+
+        // Kiểm tra JWT thông qua Identity Service
+        return identityService
+                .introspect(token)
+                .flatMap(introspectResponse -> {
+
+                    if (introspectResponse.getResult().isValid()) {
+
+                        log.info("Authentication successful");
+
+                        return chain.filter(exchange);
+                    }
+
+                    log.warn("Invalid JWT token");
+
+                    return unauthenticated(exchange.getResponse());
+                })
+                .onErrorResume(throwable -> {
+
+                    log.error(
+                            "JWT introspection failed",
+                            throwable
+                    );
+
+                    return unauthenticated(exchange.getResponse());
+                });
     }
-    private boolean isPublicEndpoints(ServerHttpRequest request){
-        return Arrays.stream(publicEndpoints).anyMatch(s->request.getURI().getPath().matches(apiPrefix +s));
+
+    /**
+     * Kiểm tra request hiện tại có phải public endpoint hay không.
+     */
+    private boolean isPublicEndpoint(ServerHttpRequest request) {
+
+        String path = request.getURI().getPath();
+
+        return Arrays.stream(publicEndpoints)
+                .anyMatch(endpoint ->
+                        path.matches(apiPrefix + endpoint)
+                );
     }
 
     @Override
@@ -100,20 +155,37 @@ public class AuthenticationFilter implements GlobalFilter, Ordered {
         return -1;
     }
 
+    /**
+     * Trả về HTTP 401 khi user chưa xác thực.
+     */
     Mono<Void> unauthenticated(ServerHttpResponse response) {
-        ApiResponse<?> apiResponse =ApiResponse.builder()
+
+        ApiResponse<?> apiResponse = ApiResponse.builder()
                 .code(1401)
                 .message("Unauthenticated")
                 .build();
-        String body = null;
+
+        String body;
+
         try {
-            body=objectMapper.writeValueAsString(apiResponse);
-        }catch (JacksonException e){
-            throw  new RuntimeException(e);
+            body = objectMapper.writeValueAsString(apiResponse);
+        } catch (JacksonException e) {
+            throw new RuntimeException(e);
         }
+
         response.setStatusCode(HttpStatus.UNAUTHORIZED);
-        response.getHeaders().add(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE);
+
+        response.getHeaders().add(
+                HttpHeaders.CONTENT_TYPE,
+                MediaType.APPLICATION_JSON_VALUE
+        );
+
         return response.writeWith(
-                Mono.just(response.bufferFactory().wrap(body.getBytes())));
+                Mono.just(
+                        response
+                                .bufferFactory()
+                                .wrap(body.getBytes())
+                )
+        );
     }
 }

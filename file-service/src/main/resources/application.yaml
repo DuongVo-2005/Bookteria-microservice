@@ -2,10 +2,13 @@ server:
   port: 8084
   servlet:
     context-path: /file
+
 spring:
   application:
     name: file-service
-  mongodb.uri: mongodb://root:123456@localhost:27017/file-service?authSource=admin
+
+  mongodb.uri: ${MONGODB_URI:mongodb://root:123456@localhost:27017/file-service?authSource=admin}
+
   servlet:
     multipart:
       max-file-size: 10MB
@@ -13,15 +16,17 @@ spring:
 
 app:
   file:
-    storage-dir: C:/upload
-    download-prefix: http://localhost:8084/file/media/download/
+    storage-dir: ${FILE_STORAGE_DIR:/app/uploads}
+    download-prefix: ${FILE_DOWNLOAD_PREFIX:http://localhost:8084/file/media/download/}
+
 jwt:
-  signerKey: "1TjXchw5FloESb63Kc+DFhTARvpWL4jUGCwfGWxuG5SIf/1y/LgJxHnMqaF6A/ij"
+  signerKey: "${JWT_SIGNER_KEY}"
 
 management:
   endpoint:
     health:
       show-details: always
+
   endpoints:
     web:
       exposure:
